@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Quick MC Grader</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root {
+        --bg: #fff;
+        --fg: #000;
+        --kbd: #eee;
+        --ok: #c8ffc8;
+        --bad: #ffc8c8;
+        --border: #aaa;
+      }
+      body.dark {
+        --bg: #121212;
+        --fg: #e4e4e4;
+        --kbd: #444;
+        --ok: #295e29;
+        --bad: #5e2929;
+        --border: #555;
+      }
+      body {
+        margin: 20px auto;
+        max-width: 640px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: sans-serif;
+      }
+      h1 {
+        margin: 0;
+      }
+      kbd {
+        padding: 2px 4px;
+        border-radius: 3px;
+        background: var(--kbd);
+        color: var(--fg);
+        font-family: monospace;
+      }
+      ul {
+        margin: 6px 0 14px 20px;
+        padding: 0;
+      }
+      ul li {
+        margin: 3px 0;
+        line-height: 1.3;
+      }
+      button {
+        margin: 4px 4px 4px 0;
+        font-size: 0.9rem;
+      }
+      table {
+        width: 100%;
+        margin-top: 12px;
+        border-collapse: collapse;
+      }
+      td,
+      th {
+        padding: 4px 8px;
+        text-align: center;
+        border: 1px solid var(--border);
+      }
+      .correct {
+        background: var(--ok);
+      }
+      .wrong {
+        background: var(--bad);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Quick MC Grader</h1>
+
+    <ul aria-label="Keyboard shortcuts">
+      <li><kbd>1–6</kbd> or <kbd>A–F</kbd> → choices</li>
+      <li><kbd>M</kbd> toggle answer/key mode</li>
+      <li><kbd>T</kbd> toggle dark mode</li>
+      <li><kbd>Backspace</kbd> delete last entry</li>
+      <li><kbd>Ctrl + Z/Y</kbd> undo/redo</li>
+    </ul>
+
+    <div>
+      <button id="mode-btn">Switch to KEY mode</button>
+      <button id="reset-btn">Reset</button>
+      <button id="csv-btn">Export CSV</button>
+      <button id="dark-btn">Dark mode</button>
+    </div>
+
+    <div>
+      Mode: <span id="mode-tag">ANSWER</span> · Score:
+      <span id="score">0/0 (0.000%)</span>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Ans</th>
+          <th>Key</th>
+          <th>✓</th>
+        </tr>
+      </thead>
+      <tbody id="sheet"></tbody>
+    </table>
+
+    <script>
+      const STORAGE = "quickMcGraderState",
+        CHOICES = 6;
+      let answerMode = true,
+        answers = [],
+        keys = [],
+        undo = [],
+        redo = [];
+      const $ = (s) => document.querySelector(s),
+        sheet = $("#sheet");
+
+      const letter = (n) => String.fromCharCode(64 + n);
+      const now = () => {
+        const d = new Date(),
+          p = (n) => `${n}`.padStart(2, "0");
+        return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(
+          d.getHours()
+        )}${p(d.getMinutes())}${p(d.getSeconds())}`;
+      };
+
+      const save = () =>
+        localStorage.setItem(
+          STORAGE,
+          JSON.stringify({
+            answers,
+            keys,
+            answerMode,
+            dark: document.body.classList.contains("dark"),
+          })
+        );
+
+      function draw() {
+        sheet.innerHTML = "";
+        const rows = Math.max(answers.length, keys.length);
+        let correct = 0,
+          graded = 0;
+        for (let i = 0; i < rows; i++) {
+          const tr = sheet.insertRow();
+          tr.insertCell().textContent = i + 1;
+          tr.insertCell().textContent = answers[i] ?? "";
+          tr.insertCell().textContent = keys[i] ?? "";
+          const res = tr.insertCell();
+          if (answers[i] && keys[i]) {
+            graded++;
+            const ok = answers[i] === keys[i];
+            if (ok) correct++;
+            res.textContent = ok ? "✓" : "✗";
+            res.className = ok ? "correct" : "wrong";
+          }
+        }
+        const pct = graded ? ((correct / graded) * 100).toFixed(3) : "0.000";
+        $("#score").textContent = `${correct}/${graded} (${pct}%)`;
+        $("#mode-tag").textContent = answerMode ? "ANSWER" : "KEY";
+        $("#mode-btn").textContent = answerMode
+          ? "Switch to KEY mode"
+          : "Switch to ANSWER mode";
+        save();
+      }
+
+      function push(act) {
+        undo.push(act);
+        redo.length = 0;
+      }
+      function apply({ mode, val, type }, dir) {
+        const target = mode === "ans" ? answers : keys;
+        type === "add"
+          ? dir > 0
+            ? target.push(val)
+            : target.pop()
+          : dir > 0
+          ? target.pop()
+          : target.push(val);
+      }
+
+      function addChoice(c) {
+        (answerMode ? answers : keys).push(c);
+        push({ mode: answerMode ? "ans" : "key", val: c, type: "add" });
+        draw();
+      }
+
+      function delLast() {
+        const target = answerMode ? answers : keys;
+        if (!target.length) return;
+        const val = target.pop();
+        push({ mode: answerMode ? "ans" : "key", val, type: "del" });
+        draw();
+      }
+
+      function toggleMode() {
+        answerMode = !answerMode;
+        draw();
+      }
+      function toggleDark() {
+        document.body.classList.toggle("dark");
+        draw();
+      }
+      function reset() {
+        answers = [];
+        keys = [];
+        undo = [];
+        redo = [];
+        localStorage.removeItem(STORAGE);
+        draw();
+      }
+
+      function csv() {
+        let out = "Q,Answer,Key,Correct\n";
+        const rows = Math.max(answers.length, keys.length);
+        for (let i = 0; i < rows; i++) {
+          const a = answers[i] || "",
+            k = keys[i] || "",
+            ok = a && k ? (a === k ? "yes" : "no") : "";
+          out += `${i + 1},${a},${k},${ok}\n`;
+        }
+        const blob = new Blob([out], { type: "text/csv" });
+        const url = URL.createObjectURL(blob),
+          a = document.createElement("a");
+        a.href = url;
+        a.download = `mc-grader-${now()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      document.querySelectorAll("button").forEach((b) => {
+        b.onclick = () => {
+          b.blur();
+          ({
+            "mode-btn": toggleMode,
+            "reset-btn": reset,
+            "csv-btn": csv,
+            "dark-btn": toggleDark,
+          })[b.id]();
+        };
+      });
+
+      window.onkeydown = (e) => {
+        if (e.ctrlKey && /[zZ]/.test(e.key))
+          return (
+            undo.length &&
+            (apply(undo.pop(), -1), redo.push(undo.pop()), draw())
+          );
+        if (e.ctrlKey && /[yY]/.test(e.key))
+          return (
+            redo.length && (apply(redo.pop(), 1), undo.push(redo.pop()), draw())
+          );
+        if (e.key === "Backspace") return e.preventDefault(), delLast();
+        if (e.key === "m" || e.key === "M") return toggleMode();
+        if (e.key === "t" || e.key === "T") return toggleDark();
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        if (/^[1-6]$/.test(e.key)) return addChoice(letter(+e.key));
+        if (/^[a-fA-F]$/.test(e.key)) return addChoice(e.key.toUpperCase());
+      };
+
+      (() => {
+        try {
+          const d = JSON.parse(localStorage.getItem(STORAGE) || "{}");
+          answers = d.answers || [];
+          keys = d.keys || [];
+          answerMode = d.answerMode ?? true;
+          if (d.dark) document.body.classList.add("dark");
+        } catch {}
+      })();
+
+      draw();
+    </script>
+  </body>
+</html>
